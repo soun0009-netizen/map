@@ -48,7 +48,7 @@
 <div class="top-bar">
   <div><span class="label-start">출발:</span> <span id="txtStart"></span></div>
   <div><span class="label-end">도착:</span> <span id="txtEnd"></span></div>
-  <div class="dist-info" id="txtDist">경로 계산 중...</div>
+  <div class="dist-info" id="txtDist">실제 도로 경로 계산 중...</div>
 </div>
 
 <button class="btn-fit" onclick="fitAllBounds()">전체</button>
@@ -62,8 +62,9 @@
 
 <script>
   const CLIENT_ID = 'bpbtv6gn3r';
+  const WORKER_URL = 'https://workers.dev';
   const params = new URLSearchParams(window.location.search);
-  const startAddr = params.get('start') || '서울특별시 강남구 테헤란로 152';
+  const startAddr = params.get('start') || '인천광역시 중구 축항대로86번길 100';
   const endAddr = params.get('end') || '서울특별시 종로구 종로17길 30';
 
   document.getElementById('txtStart').innerText = startAddr;
@@ -73,7 +74,7 @@
     const s = document.createElement('script');
     const host = ['oapi', 'map', 'naver', 'com'].join('.');
     const path = ['/openapi', 'v3', 'maps.js'].join('/');
-    s.src = 'https:' + '//' + host + path + '?ncpKeyId=' + CLIENT_ID + '&submodules=geocoder';
+    s.src = 'https:' + '//' + host + path + '?ncpKeyId=' + CLIENT_ID;
     s.onload = renderMap;
     document.head.appendChild(s);
   }
@@ -89,68 +90,58 @@
     let bounds = new naver.maps.LatLngBounds();
     let startCoord = null, endCoord = null, myCoord = null, polyline = null;
 
-    function geocode(addr) {
-      return new Promise((resolve) => {
-        if (naver.maps.Service && naver.maps.Service.geocode) {
-          naver.maps.Service.geocode({ query: addr }, async function(status, res) {
-            if (status === naver.maps.Service.Status.OK && res.v2 && res.v2.addresses && res.v2.addresses.length > 0) {
-              const item = res.v2.addresses.at(0);
-              resolve(new naver.maps.LatLng(item.y, item.x));
-            } else {
-              resolve(await fallbackGeocode(addr));
-            }
-          });
-        } else {
-          fallbackGeocode(addr).then(resolve);
-        }
-      });
-    }
-
-    async function searchOSM(query) {
+    // 네이버 공식 Geocoding API 호출 (Worker 경유)
+    async function naverGeocode(addr) {
       try {
-        const url = 'https://openstreetmap.org' + encodeURIComponent(query);
-        const r = await fetch(url);
-        const data = await r.json();
-        if (data && data.length > 0) {
-          return new naver.maps.LatLng(parseFloat(data.at(0).lat), parseFloat(data.at(0).lon));
+        const res = await fetch(WORKER_URL + '?type=geo&q=' + encodeURIComponent(addr));
+        const data = await res.json();
+        if (data && data.addresses && data.addresses.length > 0) {
+          const item = data.addresses.at(0);
+          return new naver.maps.LatLng(parseFloat(item.y), parseFloat(item.x));
         }
       } catch (e) {}
       return null;
     }
 
-    async function fallbackGeocode(addr) {
-      // '특별시/광역시/특별자치시' 제거 및 층/호수 제거로 검색 성공률 극대화
-      const normalized = addr
-        .replace(/특별시|광역시|특별자치시|특별자치도/g, '')
-        .replace(/\s+\d+층.*|\s+\d+호.*|\(.*?\)/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-      let res = await searchOSM(normalized);
-      if (res) return res;
-
-      // 번지 제거 후 도로명/동 검색
-      const noNum = normalized.replace(/\s+\d+(-\d+)?$/, '').trim();
-      if (noNum !== normalized) {
-        res = await searchOSM(noNum);
-        if (res) return res;
+    // 네이버 공식 Directions 5 실제 도로 경로 계산 (Worker 경유)
+    async function drawRealRoadRoute() {
+      if (!startCoord || !endCoord) {
+        document.getElementById('txtDist').innerText = '주소 좌표 확인 실패 (Worker Secret 키 확인)';
+        return;
       }
 
-      // 시/구/동 3어절만 검색
-      const parts = noNum.split(' ');
-      if (parts.length >= 3) {
-        res = await searchOSM(parts.slice(0, 3).join(' '));
-        if (res) return res;
-      }
-      return null;
-    }
+      const startStr = startCoord.lng() + ',' + startCoord.lat();
+      const goalStr = endCoord.lng() + ',' + endCoord.lat();
+      let routeUrl = WORKER_URL + '?type=route&start=' + startStr + '&goal=' + goalStr;
 
-    function distKm(p1, p2) {
-      const R = 6371;
-      const dLat = (p2.lat() - p1.lat()) * Math.PI / 180;
-      const dLon = (p2.lng() - p1.lng()) * Math.PI / 180;
-      const a = Math.sin(dLat/2)**2 + Math.cos(p1.lat()*Math.PI/180) * Math.cos(p2.lat()*Math.PI/180) * Math.sin(dLon/2)**2;
-      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      try {
+        const res = await fetch(routeUrl);
+        const data = await res.json();
+        if (data && data.route && data.route.traoptimal && data.route.traoptimal.length > 0) {
+          const route = data.route.traoptimal.at(0);
+          const roadPath = route.path.map(p => new naver.maps.LatLng(p.at(1), p.at(0)));
+
+          if (polyline) polyline.setMap(null);
+          polyline = new naver.maps.Polyline({
+            map: map,
+            path: roadPath,
+            strokeColor: '#2563eb',
+            strokeWeight: 7,
+            strokeOpacity: 0.9
+          });
+
+          const distKm = (route.summary.distance / 1000).toFixed(1);
+          const durationMin = Math.round(route.summary.duration / 60000);
+          document.getElementById('txtDist').innerText = '실제 도로 ' + distKm + 'km · 예상 ' + durationMin + '분';
+          return;
+        }
+      } catch (e) {}
+
+      // 길찾기 실패 시 직선 백업
+      polyline = new naver.maps.Polyline({
+        map: map, path: [startCoord, endCoord], strokeColor: '#f97316', strokeWeight: 6
+      });
+      document.getElementById('txtDist').innerText = '출발→도착 핀 표시 완료';
     }
 
     async function drawAll() {
@@ -162,12 +153,11 @@
             icon: { content: '<div class="pin pin-my"></div>', anchor: new naver.maps.Point(9, 9) }
           });
           bounds.extend(myCoord);
-          updateLine();
+          window.fitAllBounds();
         }, () => {}, { enableHighAccuracy: true, timeout: 3000 });
       }
 
-      // 출발지와 도착지 동시 병렬 검색 (대기시간 0초)
-      [startCoord, endCoord] = await Promise.all([geocode(startAddr), geocode(endAddr)]);
+      [startCoord, endCoord] = await Promise.all([naverGeocode(startAddr), naverGeocode(endAddr)]);
 
       if (startCoord) {
         new naver.maps.Marker({
@@ -183,32 +173,9 @@
         });
         bounds.extend(endCoord);
       }
-      updateLine();
+
+      await drawRealRoadRoute();
       window.fitAllBounds();
-    }
-
-    function updateLine() {
-      if (polyline) polyline.setMap(null);
-      const path = [];
-      if (myCoord) path.push(myCoord);
-      if (startCoord) path.push(startCoord);
-      if (endCoord) path.push(endCoord);
-
-      if (path.length >= 2) {
-        polyline = new naver.maps.Polyline({
-          map: map, path: path, strokeColor: '#f97316', strokeWeight: 6, strokeOpacity: 0.9
-        });
-      }
-      if (startCoord && endCoord) {
-        const d = distKm(startCoord, endCoord).toFixed(1);
-        let msg = '출발→도착 직선 ' + d + 'km';
-        if (myCoord) {
-          msg = '현위치→출발 ' + distKm(myCoord, startCoord).toFixed(1) + 'km / 출발→도착 ' + d + 'km';
-        }
-        document.getElementById('txtDist').innerText = msg;
-      } else {
-        document.getElementById('txtDist').innerText = '일부 주소를 찾지 못했습니다';
-      }
     }
 
     window.fitAllBounds = function() {
