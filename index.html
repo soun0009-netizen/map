@@ -48,7 +48,7 @@
 <div class="top-bar">
   <div><span class="label-start">출발:</span> <span id="txtStart"></span></div>
   <div><span class="label-end">도착:</span> <span id="txtEnd"></span></div>
-  <div class="dist-info" id="txtDist">좌표 찾는 중...</div>
+  <div class="dist-info" id="txtDist">경로 계산 중...</div>
 </div>
 
 <button class="btn-fit" onclick="fitAllBounds()">전체</button>
@@ -89,7 +89,6 @@
     let bounds = new naver.maps.LatLngBounds();
     let startCoord = null, endCoord = null, myCoord = null, polyline = null;
 
-    // 1순위: 네이버 지오코딩, 실패 시 2순위: 무료 오픈 지오코딩(VWorld/Nominatim) 백업
     function geocode(addr) {
       return new Promise((resolve) => {
         if (naver.maps.Service && naver.maps.Service.geocode) {
@@ -107,16 +106,30 @@
       });
     }
 
-    async function fallbackGeocode(addr) {
+    async function searchOSM(query) {
       try {
-        const cleanAddr = addr.replace(/\s+\d+층.*|\s+\d+호.*/g, '').trim();
-        const url = 'https://openstreetmap.org' + encodeURIComponent(cleanAddr);
+        const url = 'https://openstreetmap.org' + encodeURIComponent(query);
         const r = await fetch(url);
         const data = await r.json();
         if (data && data.length > 0) {
           return new naver.maps.LatLng(parseFloat(data.at(0).lat), parseFloat(data.at(0).lon));
         }
       } catch (e) {}
+      return null;
+    }
+
+    async function fallbackGeocode(addr) {
+      // 1차: 층/호수 제거 후 전체 주소 검색
+      const clean1 = addr.replace(/\s+\d+층.*|\s+\d+호.*|\(.*?\)/g, '').trim();
+      let res = await searchOSM(clean1);
+      if (res) return res;
+
+      // 2차: 상세 번지(숫자-숫자) 제거하고 도로명/동까지만 재검색
+      const clean2 = clean1.replace(/\s+\d+(-\d+)?$/, '').trim();
+      if (clean2 !== clean1) {
+        res = await searchOSM(clean2);
+        if (res) return res;
+      }
       return null;
     }
 
