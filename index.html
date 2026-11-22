@@ -8,9 +8,8 @@
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Malgun Gothic", sans-serif; }
-  #map { width: 100%; height: 100%; }
+  #map { width: 100%; height: 100%; background: #e5e7eb; }
   
-  /* 상단 정보 바 */
   .top-bar {
     position: fixed; top: 12px; left: 12px; right: 75px;
     background: rgba(20, 27, 45, 0.92); color: #fff;
@@ -21,7 +20,6 @@
   .top-bar .label-end { color: #f87171; font-weight: bold; }
   .top-bar .dist-info { margin-top: 4px; font-size: 14px; font-weight: bold; color: #facc15; }
 
-  /* 우측 상단 전체보기 버튼 */
   .btn-fit {
     position: fixed; top: 12px; right: 12px; width: 56px; height: 56px;
     background: #1e293b; color: #fff; border: 2px solid #475569;
@@ -29,7 +27,6 @@
     box-shadow: 0 4px 10px rgba(0,0,0,0.3); cursor: pointer;
   }
 
-  /* 하단 액션 버튼 */
   .bottom-bar {
     position: fixed; bottom: 16px; left: 12px; right: 12px;
     display: flex; gap: 8px; z-index: 100;
@@ -43,7 +40,6 @@
   .btn-end-navi { background: #dc2626; }
   .btn-close { background: #334155; flex: 0.7; }
 
-  /* 지도 핀 스타일 */
   .pin {
     padding: 6px 10px; border-radius: 20px; color: #fff; font-weight: bold;
     font-size: 13px; border: 2px solid #fff; box-shadow: 0 3px 6px rgba(0,0,0,0.4);
@@ -73,119 +69,133 @@
 
 <script>
   const params = new URLSearchParams(window.location.search);
-  const startAddr = params.get('start') || '인천광역시 제물포구 축항대로86번길 100';
+  const startAddr = params.get('start') || '인천광역시 중구 축항대로86번길 100';
   const endAddr = params.get('end') || '서울특별시 종로구 종로17길 30';
 
   document.getElementById('txtStart').innerText = startAddr;
   document.getElementById('txtEnd').innerText = endAddr;
 
-  const map = new naver.maps.Map('map', {
-    center: new naver.maps.LatLng(37.5665, 126.9780),
-    zoom: 12,
-    zoomControl: true,
-    zoomControlOptions: { position: naver.maps.Position.RIGHT_CENTER }
-  });
+  window.navermap_authFailure = function () {
+    document.getElementById('txtDist').innerText = '⚠️ 네이버 API 인증 실패 (Web URL 확인 필요)';
+  };
 
-  let bounds = new naver.maps.LatLngBounds();
-  let startCoord = null, endCoord = null, myCoord = null;
-  let polyline = null;
-
-  function geocodeAddress(address) {
-    return new Promise((resolve) => {
-      naver.maps.Service.geocode({ query: address }, function(status, response) {
-        if (status === naver.maps.Service.Status.OK && response.v2.addresses.length > 0) {
-          const item = response.v2.addresses;
-          resolve(new naver.maps.LatLng(item.y, item.x));
-        } else {
-          resolve(null);
-        }
-      });
+  if (typeof naver === 'undefined' || !naver.maps) {
+    document.getElementById('txtDist').innerText = '⚠️ 지도 스크립트 로드 실패 (Client ID/URL 확인)';
+  } else {
+    const map = new naver.maps.Map('map', {
+      center: new naver.maps.LatLng(37.5665, 126.9780),
+      zoom: 12,
+      zoomControl: true,
+      zoomControlOptions: { position: naver.maps.Position.RIGHT_CENTER }
     });
-  }
 
-  function calcDistance(p1, p2) {
-    const R = 6371;
-    const dLat = (p2.lat() - p1.lat()) * Math.PI / 180;
-    const dLon = (p2.lng() - p1.lng()) * Math.PI / 180;
-    const a = Math.sin(dLat/2)**2 + Math.cos(p1.lat()*Math.PI/180) * Math.cos(p2.lat()*Math.PI/180) * Math.sin(dLon/2)**2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  }
+    let bounds = new naver.maps.LatLngBounds();
+    let startCoord = null, endCoord = null, myCoord = null;
+    let polyline = null;
 
-  async function initRoute() {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition((pos) => {
-        myCoord = new naver.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
-        new naver.maps.Marker({
-          position: myCoord, map: map,
-          icon: { content: '<div class="pin pin-my"></div>', anchor: new naver.maps.Point(9, 9) }
+    function geocodeAddress(address) {
+      return new Promise((resolve) => {
+        if (!naver.maps.Service || !naver.maps.Service.geocode) {
+          resolve(null);
+          return;
+        }
+        naver.maps.Service.geocode({ query: address }, function(status, response) {
+          if (status === naver.maps.Service.Status.OK && response.v2 && response.v2.addresses && response.v2.addresses.length > 0) {
+            const item = response.v2.addresses[0];
+            resolve(new naver.maps.LatLng(item.y, item.x));
+          } else {
+            resolve(null);
+          }
         });
-        bounds.extend(myCoord);
-        drawLines();
-      }, () => {}, { enableHighAccuracy: true, timeout: 3000 });
-    }
-
-    startCoord = await geocodeAddress(startAddr);
-    endCoord = await geocodeAddress(endAddr);
-
-    if (startCoord) {
-      new naver.maps.Marker({
-        position: startCoord, map: map,
-        icon: { content: '<div class="pin pin-start">출발</div>', anchor: new naver.maps.Point(22, 15) }
-      });
-      bounds.extend(startCoord);
-    }
-
-    if (endCoord) {
-      new naver.maps.Marker({
-        position: endCoord, map: map,
-        icon: { content: '<div class="pin pin-end">도착</div>', anchor: new naver.maps.Point(22, 15) }
-      });
-      bounds.extend(endCoord);
-    }
-
-    drawLines();
-    fitAllBounds();
-  }
-
-  function drawLines() {
-    if (polyline) polyline.setMap(null);
-    const path = [];
-    if (myCoord) path.push(myCoord);
-    if (startCoord) path.push(startCoord);
-    if (endCoord) path.push(endCoord);
-
-    if (path.length >= 2) {
-      polyline = new naver.maps.Polyline({
-        map: map, path: path,
-        strokeColor: '#f97316', strokeWeight: 6, strokeOpacity: 0.9
       });
     }
 
-    if (startCoord && endCoord) {
-      const dist = calcDistance(startCoord, endCoord).toFixed(1);
-      let msg = `출발→도착 직선 ${dist}km`;
-      if (myCoord) {
-        const toStart = calcDistance(myCoord, startCoord).toFixed(1);
-        msg = `현위치→출발 ${toStart}km / 출발→도착 ${dist}km`;
+    function calcDistance(p1, p2) {
+      const R = 6371;
+      const dLat = (p2.lat() - p1.lat()) * Math.PI / 180;
+      const dLon = (p2.lng() - p1.lng()) * Math.PI / 180;
+      const a = Math.sin(dLat/2)**2 + Math.cos(p1.lat()*Math.PI/180) * Math.cos(p2.lat()*Math.PI/180) * Math.sin(dLon/2)**2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+
+    async function initRoute() {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition((pos) => {
+          myCoord = new naver.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
+          new naver.maps.Marker({
+            position: myCoord, map: map,
+            icon: { content: '<div class="pin pin-my"></div>', anchor: new naver.maps.Point(9, 9) }
+          });
+          bounds.extend(myCoord);
+          drawLines();
+        }, () => {}, { enableHighAccuracy: true, timeout: 3000 });
       }
-      document.getElementById('txtDist').innerText = msg;
+
+      startCoord = await geocodeAddress(startAddr);
+      endCoord = await geocodeAddress(endAddr);
+
+      if (startCoord) {
+        new naver.maps.Marker({
+          position: startCoord, map: map,
+          icon: { content: '<div class="pin pin-start">출발</div>', anchor: new naver.maps.Point(22, 15) }
+        });
+        bounds.extend(startCoord);
+      }
+
+      if (endCoord) {
+        new naver.maps.Marker({
+          position: endCoord, map: map,
+          icon: { content: '<div class="pin pin-end">도착</div>', anchor: new naver.maps.Point(22, 15) }
+        });
+        bounds.extend(endCoord);
+      }
+
+      drawLines();
+      fitAllBounds();
     }
-  }
 
-  function fitAllBounds() {
-    if (!bounds.isEmpty()) {
-      map.fitBounds(bounds, { top: 110, right: 40, bottom: 90, left: 40 });
+    function drawLines() {
+      if (polyline) polyline.setMap(null);
+      const path = [];
+      if (myCoord) path.push(myCoord);
+      if (startCoord) path.push(startCoord);
+      if (endCoord) path.push(endCoord);
+
+      if (path.length >= 2) {
+        polyline = new naver.maps.Polyline({
+          map: map, path: path,
+          strokeColor: '#f97316', strokeWeight: 6, strokeOpacity: 0.9
+        });
+      }
+
+      if (startCoord && endCoord) {
+        const dist = calcDistance(startCoord, endCoord).toFixed(1);
+        let msg = `출발→도착 직선 ${dist}km`;
+        if (myCoord) {
+          const toStart = calcDistance(myCoord, startCoord).toFixed(1);
+          msg = `현위치→출발 ${toStart}km / 출발→도착 ${dist}km`;
+        }
+        document.getElementById('txtDist').innerText = msg;
+      } else {
+        document.getElementById('txtDist').innerText = '주소 좌표 변환 확인 중 (Geocoding API 체크)';
+      }
     }
-  }
 
-  function openNavi(target) {
-    const coord = target === 'start' ? startCoord : endCoord;
-    const name = target === 'start' ? startAddr : endAddr;
-    if (!coord) return alert('좌표를 찾을 수 없습니다.');
-    location.href = `nmap://route/car?dlat=${coord.lat()}&dlng=${coord.lng()}&dname=${encodeURIComponent(name)}&appname=com.quick.map`;
-  }
+    window.fitAllBounds = function() {
+      if (!bounds.isEmpty()) {
+        map.fitBounds(bounds, { top: 110, right: 40, bottom: 90, left: 40 });
+      }
+    };
 
-  initRoute();
+    window.openNavi = function(target) {
+      const coord = target === 'start' ? startCoord : endCoord;
+      const name = target === 'start' ? startAddr : endAddr;
+      if (!coord) return alert('좌표를 찾을 수 없습니다.');
+      location.href = `nmap://route/car?dlat=${coord.lat()}&dlng=${coord.lng()}&dname=${encodeURIComponent(name)}&appname=com.quick.map`;
+    };
+
+    initRoute();
+  }
 </script>
 </body>
 </html>
