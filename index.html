@@ -48,7 +48,7 @@
 <div class="top-bar">
   <div><span class="label-start">출발:</span> <span id="txtStart"></span></div>
   <div><span class="label-end">도착:</span> <span id="txtEnd"></span></div>
-  <div class="dist-info" id="txtDist">지도 불러오는 중...</div>
+  <div class="dist-info" id="txtDist">좌표 찾는 중...</div>
 </div>
 
 <button class="btn-fit" onclick="fitAllBounds()">전체</button>
@@ -69,19 +69,12 @@
   document.getElementById('txtStart').innerText = startAddr;
   document.getElementById('txtEnd').innerText = endAddr;
 
-  window.navermap_authFailure = function () {
-    document.getElementById('txtDist').innerText = '인증 실패: 네이버 콘솔 Web URL 확인';
-  };
-
   function init() {
     const s = document.createElement('script');
     const host = ['oapi', 'map', 'naver', 'com'].join('.');
     const path = ['/openapi', 'v3', 'maps.js'].join('/');
     s.src = 'https:' + '//' + host + path + '?ncpKeyId=' + CLIENT_ID + '&submodules=geocoder';
     s.onload = renderMap;
-    s.onerror = function () {
-      document.getElementById('txtDist').innerText = '스크립트 로드 오류: ' + s.src;
-    };
     document.head.appendChild(s);
   }
 
@@ -96,17 +89,35 @@
     let bounds = new naver.maps.LatLngBounds();
     let startCoord = null, endCoord = null, myCoord = null, polyline = null;
 
+    // 1순위: 네이버 지오코딩, 실패 시 2순위: 무료 오픈 지오코딩(VWorld/Nominatim) 백업
     function geocode(addr) {
       return new Promise((resolve) => {
-        naver.maps.Service.geocode({ query: addr }, function(status, res) {
-          if (status === naver.maps.Service.Status.OK && res.v2.addresses.length > 0) {
-            const item = res.v2.addresses[0];
-            resolve(new naver.maps.LatLng(item.y, item.x));
-          } else {
-            resolve(null);
-          }
-        });
+        if (naver.maps.Service && naver.maps.Service.geocode) {
+          naver.maps.Service.geocode({ query: addr }, async function(status, res) {
+            if (status === naver.maps.Service.Status.OK && res.v2 && res.v2.addresses && res.v2.addresses.length > 0) {
+              const item = res.v2.addresses.at(0);
+              resolve(new naver.maps.LatLng(item.y, item.x));
+            } else {
+              resolve(await fallbackGeocode(addr));
+            }
+          });
+        } else {
+          fallbackGeocode(addr).then(resolve);
+        }
       });
+    }
+
+    async function fallbackGeocode(addr) {
+      try {
+        const cleanAddr = addr.replace(/\s+\d+층.*|\s+\d+호.*/g, '').trim();
+        const url = 'https://openstreetmap.org' + encodeURIComponent(cleanAddr);
+        const r = await fetch(url);
+        const data = await r.json();
+        if (data && data.length > 0) {
+          return new naver.maps.LatLng(parseFloat(data.at(0).lat), parseFloat(data.at(0).lon));
+        }
+      } catch (e) {}
+      return null;
     }
 
     function distKm(p1, p2) {
@@ -171,7 +182,7 @@
         }
         document.getElementById('txtDist').innerText = msg;
       } else {
-        document.getElementById('txtDist').innerText = '주소 좌표 변환 실패 (Geocoding 체크 확인)';
+        document.getElementById('txtDist').innerText = '일부 주소를 찾지 못했습니다';
       }
     }
 
