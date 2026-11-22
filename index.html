@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>전체화면 동선지도</title>
+<script type="text/javascript" src="https://naver.com"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Malgun Gothic", sans-serif; }
+  #map { width: 100%; height: 100%; }
+  
+  /* 상단 정보 바 */
+  .top-bar {
+    position: fixed; top: 12px; left: 12px; right: 75px;
+    background: rgba(20, 27, 45, 0.92); color: #fff;
+    padding: 12px 14px; border-radius: 12px; z-index: 100;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3); font-size: 13px; line-height: 1.45;
+  }
+  .top-bar .label-start { color: #4ade80; font-weight: bold; }
+  .top-bar .label-end { color: #f87171; font-weight: bold; }
+  .top-bar .dist-info { margin-top: 4px; font-size: 14px; font-weight: bold; color: #facc15; }
+
+  /* 우측 상단 전체보기 버튼 */
+  .btn-fit {
+    position: fixed; top: 12px; right: 12px; width: 56px; height: 56px;
+    background: #1e293b; color: #fff; border: 2px solid #475569;
+    border-radius: 12px; font-weight: bold; font-size: 14px; z-index: 100;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.3); cursor: pointer;
+  }
+
+  /* 하단 액션 버튼 */
+  .bottom-bar {
+    position: fixed; bottom: 16px; left: 12px; right: 12px;
+    display: flex; gap: 8px; z-index: 100;
+  }
+  .btn {
+    flex: 1; padding: 14px 8px; border: none; border-radius: 12px;
+    font-size: 15px; font-weight: bold; color: #fff; cursor: pointer;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.25);
+  }
+  .btn-start-navi { background: #16a34a; }
+  .btn-end-navi { background: #dc2626; }
+  .btn-close { background: #334155; flex: 0.7; }
+
+  /* 지도 핀 스타일 */
+  .pin {
+    padding: 6px 10px; border-radius: 20px; color: #fff; font-weight: bold;
+    font-size: 13px; border: 2px solid #fff; box-shadow: 0 3px 6px rgba(0,0,0,0.4);
+    white-space: nowrap;
+  }
+  .pin-my { background: #2563eb; border-radius: 50%; width: 18px; height: 18px; padding: 0; }
+  .pin-start { background: #16a34a; }
+  .pin-end { background: #dc2626; }
+</style>
+</head>
+<body>
+
+<div class="top-bar" id="infoBar">
+  <div><span class="label-start">출발:</span> <span id="txtStart">불러오는 중...</span></div>
+  <div><span class="label-end">도착:</span> <span id="txtEnd">불러오는 중...</span></div>
+  <div class="dist-info" id="txtDist">경로 계산 중...</div>
+</div>
+
+<button class="btn-fit" onclick="fitAllBounds()">전체</button>
+<div id="map"></div>
+
+<div class="bottom-bar">
+  <button class="btn btn-start-navi" onclick="openNavi('start')">출발지 내비</button>
+  <button class="btn btn-end-navi" onclick="openNavi('end')">도착지 내비</button>
+  <button class="btn btn-close" onclick="window.close(); history.back();">닫기</button>
+</div>
+
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const startAddr = params.get('start') || '인천광역시 제물포구 축항대로86번길 100';
+  const endAddr = params.get('end') || '서울특별시 종로구 종로17길 30';
+
+  document.getElementById('txtStart').innerText = startAddr;
+  document.getElementById('txtEnd').innerText = endAddr;
+
+  const map = new naver.maps.Map('map', {
+    center: new naver.maps.LatLng(37.5665, 126.9780),
+    zoom: 12,
+    zoomControl: true,
+    zoomControlOptions: { position: naver.maps.Position.RIGHT_CENTER }
+  });
+
+  let bounds = new naver.maps.LatLngBounds();
+  let startCoord = null, endCoord = null, myCoord = null;
+  let polyline = null;
+
+  function geocodeAddress(address) {
+    return new Promise((resolve) => {
+      naver.maps.Service.geocode({ query: address }, function(status, response) {
+        if (status === naver.maps.Service.Status.OK && response.v2.addresses.length > 0) {
+          const item = response.v2.addresses;
+          resolve(new naver.maps.LatLng(item.y, item.x));
+        } else {
+          resolve(null);
+        }
+      });
+    });
+  }
+
+  function calcDistance(p1, p2) {
+    const R = 6371;
+    const dLat = (p2.lat() - p1.lat()) * Math.PI / 180;
+    const dLon = (p2.lng() - p1.lng()) * Math.PI / 180;
+    const a = Math.sin(dLat/2)**2 + Math.cos(p1.lat()*Math.PI/180) * Math.cos(p2.lat()*Math.PI/180) * Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  async function initRoute() {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition((pos) => {
+        myCoord = new naver.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
+        new naver.maps.Marker({
+          position: myCoord, map: map,
+          icon: { content: '<div class="pin pin-my"></div>', anchor: new naver.maps.Point(9, 9) }
+        });
+        bounds.extend(myCoord);
+        drawLines();
+      }, () => {}, { enableHighAccuracy: true, timeout: 3000 });
+    }
+
+    startCoord = await geocodeAddress(startAddr);
+    endCoord = await geocodeAddress(endAddr);
+
+    if (startCoord) {
+      new naver.maps.Marker({
+        position: startCoord, map: map,
+        icon: { content: '<div class="pin pin-start">출발</div>', anchor: new naver.maps.Point(22, 15) }
+      });
+      bounds.extend(startCoord);
+    }
+
+    if (endCoord) {
+      new naver.maps.Marker({
+        position: endCoord, map: map,
+        icon: { content: '<div class="pin pin-end">도착</div>', anchor: new naver.maps.Point(22, 15) }
+      });
+      bounds.extend(endCoord);
+    }
+
+    drawLines();
+    fitAllBounds();
+  }
+
+  function drawLines() {
+    if (polyline) polyline.setMap(null);
+    const path = [];
+    if (myCoord) path.push(myCoord);
+    if (startCoord) path.push(startCoord);
+    if (endCoord) path.push(endCoord);
+
+    if (path.length >= 2) {
+      polyline = new naver.maps.Polyline({
+        map: map, path: path,
+        strokeColor: '#f97316', strokeWeight: 6, strokeOpacity: 0.9
+      });
+    }
+
+    if (startCoord && endCoord) {
+      const dist = calcDistance(startCoord, endCoord).toFixed(1);
+      let msg = `출발→도착 직선 ${dist}km`;
+      if (myCoord) {
+        const toStart = calcDistance(myCoord, startCoord).toFixed(1);
+        msg = `현위치→출발 ${toStart}km / 출발→도착 ${dist}km`;
+      }
+      document.getElementById('txtDist').innerText = msg;
+    }
+  }
+
+  function fitAllBounds() {
+    if (!bounds.isEmpty()) {
+      map.fitBounds(bounds, { top: 110, right: 40, bottom: 90, left: 40 });
+    }
+  }
+
+  function openNavi(target) {
+    const coord = target === 'start' ? startCoord : endCoord;
+    const name = target === 'start' ? startAddr : endAddr;
+    if (!coord) return alert('좌표를 찾을 수 없습니다.');
+    location.href = `nmap://route/car?dlat=${coord.lat()}&dlng=${coord.lng()}&dname=${encodeURIComponent(name)}&appname=com.quick.map`;
+  }
+
+  initRoute();
+</script>
+</body>
+</html>
