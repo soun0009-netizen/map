@@ -63,7 +63,7 @@
 <script>
   const CLIENT_ID = 'bpbtv6gn3r';
   const params = new URLSearchParams(window.location.search);
-  const startAddr = params.get('start') || '인천광역시 중구 축항대로86번길 100';
+  const startAddr = params.get('start') || '서울특별시 강남구 테헤란로 152';
   const endAddr = params.get('end') || '서울특별시 종로구 종로17길 30';
 
   document.getElementById('txtStart').innerText = startAddr;
@@ -119,15 +119,20 @@
     }
 
     async function fallbackGeocode(addr) {
-      // 1차: 층/호수 제거 후 전체 주소 검색
       const clean1 = addr.replace(/\s+\d+층.*|\s+\d+호.*|\(.*?\)/g, '').trim();
       let res = await searchOSM(clean1);
       if (res) return res;
 
-      // 2차: 상세 번지(숫자-숫자) 제거하고 도로명/동까지만 재검색
       const clean2 = clean1.replace(/\s+\d+(-\d+)?$/, '').trim();
       if (clean2 !== clean1) {
         res = await searchOSM(clean2);
+        if (res) return res;
+      }
+
+      // 3차: 시/군/구 + 동/읍/면까지만 추출해서 검색
+      const parts = clean2.split(/\s+/);
+      if (parts.length >= 3) {
+        res = await searchOSM(parts.slice(0, 3).join(' '));
         if (res) return res;
       }
       return null;
