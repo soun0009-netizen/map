@@ -9,16 +9,27 @@
   html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Malgun Gothic", sans-serif; }
   #map { width: 100%; height: 100%; background: #e5e7eb; }
   .top-bar {
-    position: fixed; top: 12px; left: 12px; right: 75px;
-    background: rgba(20, 27, 45, 0.92); color: #fff;
-    padding: 12px 14px; border-radius: 12px; z-index: 100;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3); font-size: 13px; line-height: 1.45;
+    position: fixed; top: 10px; left: 10px; right: 72px;
+    background: rgba(20, 27, 45, 0.94); color: #fff;
+    padding: 10px 12px; border-radius: 12px; z-index: 100;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.35); font-size: 13px;
   }
-  .label-start { color: #4ade80; font-weight: bold; }
-  .label-end { color: #f87171; font-weight: bold; }
-  .dist-info { margin-top: 4px; font-size: 14px; font-weight: bold; color: #facc15; }
+  .addr-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .label-start { color: #4ade80; font-weight: bold; white-space: nowrap; }
+  .label-end { color: #f87171; font-weight: bold; white-space: nowrap; }
+  .addr-input {
+    flex: 1; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.25);
+    color: #fff; padding: 6px 8px; border-radius: 6px; font-size: 13px; width: 100%;
+  }
+  .btn-paste {
+    background: #3b82f6; color: #fff; border: none; border-radius: 6px;
+    padding: 6px 9px; font-size: 12px; font-weight: bold; white-space: nowrap; cursor: pointer;
+  }
+  .btn-paste.green { background: #16a34a; }
+  .btn-paste.red { background: #dc2626; }
+  .dist-info { margin-top: 2px; font-size: 14px; font-weight: bold; color: #facc15; }
   .btn-fit {
-    position: fixed; top: 12px; right: 12px; width: 56px; height: 56px;
+    position: fixed; top: 10px; right: 10px; width: 54px; height: 54px;
     background: #1e293b; color: #fff; border: 2px solid #475569;
     border-radius: 12px; font-weight: bold; font-size: 14px; z-index: 100;
   }
@@ -46,9 +57,17 @@
 <body>
 
 <div class="top-bar">
-  <div><span class="label-start">출발:</span> <span id="txtStart"></span></div>
-  <div><span class="label-end">도착:</span> <span id="txtEnd"></span></div>
-  <div class="dist-info" id="txtDist">실제 도로 경로 계산 중...</div>
+  <div class="addr-row">
+    <span class="label-start">출발</span>
+    <input type="text" id="inStart" class="addr-input" placeholder="출발지 주소" onchange="recalcRoute()">
+    <button class="btn-paste green" onclick="pasteAddr('inStart')">붙이기</button>
+  </div>
+  <div class="addr-row">
+    <span class="label-end">도착</span>
+    <input type="text" id="inEnd" class="addr-input" placeholder="도착지 주소" onchange="recalcRoute()">
+    <button class="btn-paste red" onclick="pasteAddr('inEnd')">붙이기</button>
+  </div>
+  <div class="dist-info" id="txtDist">주소를 붙여넣으면 경로가 표시됩니다</div>
 </div>
 
 <button class="btn-fit" onclick="fitAllBounds()">전체</button>
@@ -64,11 +83,12 @@
   const CLIENT_ID = 'bpbtv6gn3r';
   const WORKER_URL = 'https://' + ['twilight-shape-a67c', 'soun0009-81d', 'workers', 'dev'].join('.');
   const params = new URLSearchParams(window.location.search);
-  const startAddr = params.get('start') || '인천광역시 중구 축항대로86번길 100';
-  const endAddr = params.get('end') || '서울특별시 종로구 종로17길 30';
 
-  document.getElementById('txtStart').innerText = startAddr;
-  document.getElementById('txtEnd').innerText = endAddr;
+  document.getElementById('inStart').value = params.get('start') || '';
+  document.getElementById('inEnd').value = params.get('end') || '';
+
+  let map, bounds, startCoord = null, endCoord = null, myCoord = null;
+  let startMarker = null, endMarker = null, polyline = null;
 
   function init() {
     const s = document.createElement('script');
@@ -80,116 +100,132 @@
   }
 
   function renderMap() {
-    const map = new naver.maps.Map('map', {
+    map = new naver.maps.Map('map', {
       center: new naver.maps.LatLng(37.5665, 126.9780),
       zoom: 12,
       zoomControl: true,
       zoomControlOptions: { position: naver.maps.Position.RIGHT_CENTER }
     });
 
-    let bounds = new naver.maps.LatLngBounds();
-    let startCoord = null, endCoord = null, myCoord = null, polyline = null;
-
-    async function naverGeocode(addr) {
-      try {
-        const res = await fetch(WORKER_URL + '?type=geo&q=' + encodeURIComponent(addr));
-        const data = await res.json();
-        if (data && data.addresses && data.addresses.length > 0) {
-          const item = data.addresses.at(0);
-          return new naver.maps.LatLng(parseFloat(item.y), parseFloat(item.x));
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition((pos) => {
+        myCoord = new naver.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
+        new naver.maps.Marker({
+          position: myCoord, map: map,
+          icon: { content: '<div class="pin pin-my"></div>', anchor: new naver.maps.Point(9, 9) }
+        });
+        map.setCenter(myCoord);
+        if (document.getElementById('inStart').value || document.getElementById('inEnd').value) {
+          recalcRoute();
         }
-      } catch (e) {}
-      return null;
+      }, () => {}, { enableHighAccuracy: true, timeout: 3000 });
     }
 
-    async function drawRealRoadRoute() {
-      if (!startCoord || !endCoord) {
-        document.getElementById('txtDist').innerText = '주소를 찾을 수 없습니다';
-        return;
+    if (document.getElementById('inStart').value || document.getElementById('inEnd').value) {
+      recalcRoute();
+    }
+  }
+
+  window.pasteAddr = async function(inputId) {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text && text.trim()) {
+        document.getElementById(inputId).value = text.trim();
+        recalcRoute();
+      } else {
+        alert('클립보드에 복사된 주소가 없습니다.');
       }
+    } catch (e) {
+      const el = document.getElementById(inputId);
+      el.focus();
+      alert('입력창을 길게 눌러 [붙여넣기] 해주세요.');
+    }
+  };
 
-      const startStr = startCoord.lng() + ',' + startCoord.lat();
-      const goalStr = endCoord.lng() + ',' + endCoord.lat();
-      const routeUrl = WORKER_URL + '?type=route&start=' + startStr + '&goal=' + goalStr;
+  async function naverGeocode(addr) {
+    if (!addr || !addr.trim()) return null;
+    try {
+      const res = await fetch(WORKER_URL + '?type=geo&q=' + encodeURIComponent(addr.trim()));
+      const data = await res.json();
+      if (data && data.addresses && data.addresses.length > 0) {
+        const item = data.addresses.at(0);
+        return new naver.maps.LatLng(parseFloat(item.y), parseFloat(item.x));
+      }
+    } catch (e) {}
+    return null;
+  }
 
+  window.recalcRoute = async function() {
+    const startAddr = document.getElementById('inStart').value.trim();
+    const endAddr = document.getElementById('inEnd').value.trim();
+    if (!startAddr && !endAddr) return;
+
+    document.getElementById('txtDist').innerText = '실제 도로 경로 계산 중...';
+    bounds = new naver.maps.LatLngBounds();
+    if (myCoord) bounds.extend(myCoord);
+
+    [startCoord, endCoord] = await Promise.all([naverGeocode(startAddr), naverGeocode(endAddr)]);
+
+    if (startMarker) startMarker.setMap(null);
+    if (endMarker) endMarker.setMap(null);
+    if (polyline) polyline.setMap(null);
+
+    if (startCoord) {
+      startMarker = new naver.maps.Marker({
+        position: startCoord, map: map,
+        icon: { content: '<div class="pin pin-start">출발</div>', anchor: new naver.maps.Point(22, 15) }
+      });
+      bounds.extend(startCoord);
+    }
+    if (endCoord) {
+      endMarker = new naver.maps.Marker({
+        position: endCoord, map: map,
+        icon: { content: '<div class="pin pin-end">도착</div>', anchor: new naver.maps.Point(22, 15) }
+      });
+      bounds.extend(endCoord);
+    }
+
+    const origin = startCoord || myCoord;
+    const dest = endCoord || startCoord;
+
+    if (origin && dest && origin !== dest) {
+      const startStr = origin.lng() + ',' + origin.lat();
+      const goalStr = dest.lng() + ',' + dest.lat();
       try {
-        const res = await fetch(routeUrl);
+        const res = await fetch(WORKER_URL + '?type=route&start=' + startStr + '&goal=' + goalStr);
         const data = await res.json();
         if (data && data.route && data.route.traoptimal && data.route.traoptimal.length > 0) {
           const route = data.route.traoptimal.at(0);
           const roadPath = route.path.map(p => new naver.maps.LatLng(p.at(1), p.at(0)));
-
-          if (polyline) polyline.setMap(null);
           polyline = new naver.maps.Polyline({
-            map: map,
-            path: roadPath,
-            strokeColor: '#2563eb',
-            strokeWeight: 7,
-            strokeOpacity: 0.9
+            map: map, path: roadPath, strokeColor: '#2563eb', strokeWeight: 7, strokeOpacity: 0.9
           });
-
           const distKm = (route.summary.distance / 1000).toFixed(1);
           const durationMin = Math.round(route.summary.duration / 60000);
-          document.getElementById('txtDist').innerText = '실제 도로 ' + distKm + 'km · 예상 ' + durationMin + '분';
+          const prefix = startCoord ? '출발→도착 ' : '현위치→도착 ';
+          document.getElementById('txtDist').innerText = prefix + '실제 도로 ' + distKm + 'km · 예상 ' + durationMin + '분';
+          window.fitAllBounds();
           return;
         }
       } catch (e) {}
-
-      polyline = new naver.maps.Polyline({
-        map: map, path: [startCoord, endCoord], strokeColor: '#f97316', strokeWeight: 6
-      });
-      document.getElementById('txtDist').innerText = '출발→도착 핀 표시 완료';
     }
 
-    async function drawAll() {
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition((pos) => {
-          myCoord = new naver.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
-          new naver.maps.Marker({
-            position: myCoord, map: map,
-            icon: { content: '<div class="pin pin-my"></div>', anchor: new naver.maps.Point(9, 9) }
-          });
-          bounds.extend(myCoord);
-          window.fitAllBounds();
-        }, () => {}, { enableHighAccuracy: true, timeout: 3000 });
-      }
+    document.getElementById('txtDist').innerText = '핀 표시 완료 (나머지 주소를 붙여넣으세요)';
+    window.fitAllBounds();
+  };
 
-      [startCoord, endCoord] = await Promise.all([naverGeocode(startAddr), naverGeocode(endAddr)]);
-
-      if (startCoord) {
-        new naver.maps.Marker({
-          position: startCoord, map: map,
-          icon: { content: '<div class="pin pin-start">출발</div>', anchor: new naver.maps.Point(22, 15) }
-        });
-        bounds.extend(startCoord);
-      }
-      if (endCoord) {
-        new naver.maps.Marker({
-          position: endCoord, map: map,
-          icon: { content: '<div class="pin pin-end">도착</div>', anchor: new naver.maps.Point(22, 15) }
-        });
-        bounds.extend(endCoord);
-      }
-
-      await drawRealRoadRoute();
-      window.fitAllBounds();
+  window.fitAllBounds = function() {
+    if (bounds && !bounds.isEmpty()) {
+      map.fitBounds(bounds, { top: 135, right: 40, bottom: 90, left: 40 });
     }
+  };
 
-    window.fitAllBounds = function() {
-      if (!bounds.isEmpty()) {
-        map.fitBounds(bounds, { top: 110, right: 40, bottom: 90, left: 40 });
-      }
-    };
-
-    window.openNavi = function(target) {
-      const coord = target === 'start' ? startCoord : endCoord;
-      const name = target === 'start' ? startAddr : endAddr;
-      if (!coord) return alert('좌표를 찾을 수 없습니다.');
-      location.href = 'nmap://route/car?dlat=' + coord.lat() + '&dlng=' + coord.lng() + '&dname=' + encodeURIComponent(name) + '&appname=com.quick.map';
-    };
-
-    drawAll();
-  }
+  window.openNavi = function(target) {
+    const coord = target === 'start' ? startCoord : endCoord;
+    const name = target === 'start' ? document.getElementById('inStart').value : document.getElementById('inEnd').value;
+    if (!coord) return alert('좌표를 찾을 수 없습니다.');
+    location.href = 'nmap://route/car?dlat=' + coord.lat() + '&dlng=' + coord.lng() + '&dname=' + encodeURIComponent(name) + '&appname=com.quick.map';
+  };
 
   init();
 </script>
