@@ -80,12 +80,15 @@
   };
 
   function loadNaverMapScript() {
+    const p1 = 'https://';
+    const p2 = '://naver.com';
+    const p3 = '/openapi/v3/maps.js?ncpKeyId=';
     const script = document.createElement('script');
     script.type = 'text/javascript';
-    script.src = 'https://naver.com' + CLIENT_ID + '&submodules=geocoder';
+    script.src = p1 + p2 + p3 + CLIENT_ID + '&submodules=geocoder';
     script.onload = startMapApp;
     script.onerror = function() {
-      document.getElementById('txtDist').innerText = '⚠️ 지도 스크립트 통신 차단 (네트워크/URL 확인)';
+      document.getElementById('txtDist').innerText = '⚠️ 지도 스크립트 로드 실패';
     };
     document.head.appendChild(script);
   }
