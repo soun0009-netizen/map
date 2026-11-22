@@ -69,6 +69,8 @@
   document.getElementById('txtStart').innerText = startAddr;
   document.getElementById('txtEnd').innerText = endAddr;
 
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
   function init() {
     const s = document.createElement('script');
     const host = ['oapi', 'map', 'naver', 'com'].join('.');
@@ -123,13 +125,14 @@
       let res = await searchOSM(clean1);
       if (res) return res;
 
+      await sleep(1100);
       const clean2 = clean1.replace(/\s+\d+(-\d+)?$/, '').trim();
       if (clean2 !== clean1) {
         res = await searchOSM(clean2);
         if (res) return res;
       }
 
-      // 3차: 시/군/구 + 동/읍/면까지만 추출해서 검색
+      await sleep(1100);
       const parts = clean2.split(/\s+/);
       if (parts.length >= 3) {
         res = await searchOSM(parts.slice(0, 3).join(' '));
@@ -160,6 +163,7 @@
       }
 
       startCoord = await geocode(startAddr);
+      await sleep(1100);
       endCoord = await geocode(endAddr);
 
       if (startCoord) {
