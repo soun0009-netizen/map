@@ -69,8 +69,6 @@
   document.getElementById('txtStart').innerText = startAddr;
   document.getElementById('txtEnd').innerText = endAddr;
 
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
   function init() {
     const s = document.createElement('script');
     const host = ['oapi', 'map', 'naver', 'com'].join('.');
@@ -121,19 +119,25 @@
     }
 
     async function fallbackGeocode(addr) {
-      const clean1 = addr.replace(/\s+\d+층.*|\s+\d+호.*|\(.*?\)/g, '').trim();
-      let res = await searchOSM(clean1);
+      // '특별시/광역시/특별자치시' 제거 및 층/호수 제거로 검색 성공률 극대화
+      const normalized = addr
+        .replace(/특별시|광역시|특별자치시|특별자치도/g, '')
+        .replace(/\s+\d+층.*|\s+\d+호.*|\(.*?\)/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      let res = await searchOSM(normalized);
       if (res) return res;
 
-      await sleep(1100);
-      const clean2 = clean1.replace(/\s+\d+(-\d+)?$/, '').trim();
-      if (clean2 !== clean1) {
-        res = await searchOSM(clean2);
+      // 번지 제거 후 도로명/동 검색
+      const noNum = normalized.replace(/\s+\d+(-\d+)?$/, '').trim();
+      if (noNum !== normalized) {
+        res = await searchOSM(noNum);
         if (res) return res;
       }
 
-      await sleep(1100);
-      const parts = clean2.split(/\s+/);
+      // 시/구/동 3어절만 검색
+      const parts = noNum.split(' ');
       if (parts.length >= 3) {
         res = await searchOSM(parts.slice(0, 3).join(' '));
         if (res) return res;
@@ -162,9 +166,8 @@
         }, () => {}, { enableHighAccuracy: true, timeout: 3000 });
       }
 
-      startCoord = await geocode(startAddr);
-      await sleep(1100);
-      endCoord = await geocode(endAddr);
+      // 출발지와 도착지 동시 병렬 검색 (대기시간 0초)
+      [startCoord, endCoord] = await Promise.all([geocode(startAddr), geocode(endAddr)]);
 
       if (startCoord) {
         new naver.maps.Marker({
