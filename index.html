@@ -8,37 +8,31 @@
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Malgun Gothic", sans-serif; }
   #map { width: 100%; height: 100%; background: #e5e7eb; }
-  
   .top-bar {
     position: fixed; top: 12px; left: 12px; right: 75px;
     background: rgba(20, 27, 45, 0.92); color: #fff;
     padding: 12px 14px; border-radius: 12px; z-index: 100;
     box-shadow: 0 4px 12px rgba(0,0,0,0.3); font-size: 13px; line-height: 1.45;
   }
-  .top-bar .label-start { color: #4ade80; font-weight: bold; }
-  .top-bar .label-end { color: #f87171; font-weight: bold; }
-  .top-bar .dist-info { margin-top: 4px; font-size: 14px; font-weight: bold; color: #facc15; }
-
+  .label-start { color: #4ade80; font-weight: bold; }
+  .label-end { color: #f87171; font-weight: bold; }
+  .dist-info { margin-top: 4px; font-size: 14px; font-weight: bold; color: #facc15; }
   .btn-fit {
     position: fixed; top: 12px; right: 12px; width: 56px; height: 56px;
     background: #1e293b; color: #fff; border: 2px solid #475569;
     border-radius: 12px; font-weight: bold; font-size: 14px; z-index: 100;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.3); cursor: pointer;
   }
-
   .bottom-bar {
     position: fixed; bottom: 16px; left: 12px; right: 12px;
     display: flex; gap: 8px; z-index: 100;
   }
   .btn {
     flex: 1; padding: 14px 8px; border: none; border-radius: 12px;
-    font-size: 15px; font-weight: bold; color: #fff; cursor: pointer;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.25);
+    font-size: 15px; font-weight: bold; color: #fff;
   }
   .btn-start-navi { background: #16a34a; }
   .btn-end-navi { background: #dc2626; }
   .btn-close { background: #334155; flex: 0.7; }
-
   .pin {
     padding: 6px 10px; border-radius: 20px; color: #fff; font-weight: bold;
     font-size: 13px; border: 2px solid #fff; box-shadow: 0 3px 6px rgba(0,0,0,0.4);
@@ -51,9 +45,9 @@
 </head>
 <body>
 
-<div class="top-bar" id="infoBar">
-  <div><span class="label-start">출발:</span> <span id="txtStart">불러오는 중...</span></div>
-  <div><span class="label-end">도착:</span> <span id="txtEnd">불러오는 중...</span></div>
+<div class="top-bar">
+  <div><span class="label-start">출발:</span> <span id="txtStart"></span></div>
+  <div><span class="label-end">도착:</span> <span id="txtEnd"></span></div>
   <div class="dist-info" id="txtDist">지도 불러오는 중...</div>
 </div>
 
@@ -76,29 +70,22 @@
   document.getElementById('txtEnd').innerText = endAddr;
 
   window.navermap_authFailure = function () {
-    document.getElementById('txtDist').innerText = '⚠️ 네이버 API 인증 실패 (Client ID 또는 Web URL 확인)';
+    document.getElementById('txtDist').innerText = '인증 실패: 네이버 콘솔 Web URL 확인';
   };
 
-  function loadNaverMapScript() {
-    const p1 = 'https://';
-    const p2 = '://naver.com';
-    const p3 = '/openapi/v3/maps.js?ncpKeyId=';
-    const script = document.createElement('script');
-    script.type = 'text/javascript';
-    script.src = p1 + p2 + p3 + CLIENT_ID + '&submodules=geocoder';
-    script.onload = startMapApp;
-    script.onerror = function() {
-      document.getElementById('txtDist').innerText = '⚠️ 지도 스크립트 로드 실패';
+  function init() {
+    const s = document.createElement('script');
+    const host = ['oapi', 'map', 'naver', 'com'].join('.');
+    const path = ['/openapi', 'v3', 'maps.js'].join('/');
+    s.src = 'https:' + '//' + host + path + '?ncpKeyId=' + CLIENT_ID + '&submodules=geocoder';
+    s.onload = renderMap;
+    s.onerror = function () {
+      document.getElementById('txtDist').innerText = '스크립트 로드 오류: ' + s.src;
     };
-    document.head.appendChild(script);
+    document.head.appendChild(s);
   }
 
-  function startMapApp() {
-    if (typeof naver === 'undefined' || !naver.maps) {
-      document.getElementById('txtDist').innerText = '⚠️ naver.maps 객체 로드 실패';
-      return;
-    }
-
+  function renderMap() {
     const map = new naver.maps.Map('map', {
       center: new naver.maps.LatLng(37.5665, 126.9780),
       zoom: 12,
@@ -107,18 +94,13 @@
     });
 
     let bounds = new naver.maps.LatLngBounds();
-    let startCoord = null, endCoord = null, myCoord = null;
-    let polyline = null;
+    let startCoord = null, endCoord = null, myCoord = null, polyline = null;
 
-    function geocodeAddress(address) {
+    function geocode(addr) {
       return new Promise((resolve) => {
-        if (!naver.maps.Service || !naver.maps.Service.geocode) {
-          resolve(null);
-          return;
-        }
-        naver.maps.Service.geocode({ query: address }, function(status, response) {
-          if (status === naver.maps.Service.Status.OK && response.v2 && response.v2.addresses && response.v2.addresses.length > 0) {
-            const item = response.v2.addresses[0];
+        naver.maps.Service.geocode({ query: addr }, function(status, res) {
+          if (status === naver.maps.Service.Status.OK && res.v2.addresses.length > 0) {
+            const item = res.v2.addresses[0];
             resolve(new naver.maps.LatLng(item.y, item.x));
           } else {
             resolve(null);
@@ -127,7 +109,7 @@
       });
     }
 
-    function calcDistance(p1, p2) {
+    function distKm(p1, p2) {
       const R = 6371;
       const dLat = (p2.lat() - p1.lat()) * Math.PI / 180;
       const dLon = (p2.lng() - p1.lng()) * Math.PI / 180;
@@ -135,7 +117,7 @@
       return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     }
 
-    async function initRoute() {
+    async function drawAll() {
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition((pos) => {
           myCoord = new naver.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
@@ -144,12 +126,12 @@
             icon: { content: '<div class="pin pin-my"></div>', anchor: new naver.maps.Point(9, 9) }
           });
           bounds.extend(myCoord);
-          drawLines();
+          updateLine();
         }, () => {}, { enableHighAccuracy: true, timeout: 3000 });
       }
 
-      startCoord = await geocodeAddress(startAddr);
-      endCoord = await geocodeAddress(endAddr);
+      startCoord = await geocode(startAddr);
+      endCoord = await geocode(endAddr);
 
       if (startCoord) {
         new naver.maps.Marker({
@@ -158,7 +140,6 @@
         });
         bounds.extend(startCoord);
       }
-
       if (endCoord) {
         new naver.maps.Marker({
           position: endCoord, map: map,
@@ -166,12 +147,11 @@
         });
         bounds.extend(endCoord);
       }
-
-      drawLines();
-      fitAllBounds();
+      updateLine();
+      window.fitAllBounds();
     }
 
-    function drawLines() {
+    function updateLine() {
       if (polyline) polyline.setMap(null);
       const path = [];
       if (myCoord) path.push(myCoord);
@@ -180,21 +160,18 @@
 
       if (path.length >= 2) {
         polyline = new naver.maps.Polyline({
-          map: map, path: path,
-          strokeColor: '#f97316', strokeWeight: 6, strokeOpacity: 0.9
+          map: map, path: path, strokeColor: '#f97316', strokeWeight: 6, strokeOpacity: 0.9
         });
       }
-
       if (startCoord && endCoord) {
-        const dist = calcDistance(startCoord, endCoord).toFixed(1);
-        let msg = `출발→도착 직선 ${dist}km`;
+        const d = distKm(startCoord, endCoord).toFixed(1);
+        let msg = '출발→도착 직선 ' + d + 'km';
         if (myCoord) {
-          const toStart = calcDistance(myCoord, startCoord).toFixed(1);
-          msg = `현위치→출발 ${toStart}km / 출발→도착 ${dist}km`;
+          msg = '현위치→출발 ' + distKm(myCoord, startCoord).toFixed(1) + 'km / 출발→도착 ' + d + 'km';
         }
         document.getElementById('txtDist').innerText = msg;
       } else {
-        document.getElementById('txtDist').innerText = '⚠️ 주소 좌표 변환 실패 (Geocoding API 확인)';
+        document.getElementById('txtDist').innerText = '주소 좌표 변환 실패 (Geocoding 체크 확인)';
       }
     }
 
@@ -208,13 +185,13 @@
       const coord = target === 'start' ? startCoord : endCoord;
       const name = target === 'start' ? startAddr : endAddr;
       if (!coord) return alert('좌표를 찾을 수 없습니다.');
-      location.href = `nmap://route/car?dlat=${coord.lat()}&dlng=${coord.lng()}&dname=${encodeURIComponent(name)}&appname=com.quick.map`;
+      location.href = 'nmap://route/car?dlat=' + coord.lat() + '&dlng=' + coord.lng() + '&dname=' + encodeURIComponent(name) + '&appname=com.quick.map';
     };
 
-    initRoute();
+    drawAll();
   }
 
-  loadNaverMapScript();
+  init();
 </script>
 </body>
 </html>
